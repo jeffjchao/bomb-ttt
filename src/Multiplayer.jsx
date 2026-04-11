@@ -4,7 +4,7 @@ const EMPTY = null;
 const POS_LABELS = ["TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"];
 
 // -------- UPDATE THIS after deploying your backend to Render --------
-const SERVER_URL = "wss://YOUR-APP-NAME.onrender.com/ws";
+const SERVER_URL = "wss://bomb-ttt-server.onrender.com/ws";
 // For local testing: "ws://localhost:8000/ws"
 // --------------------------------------------------------------------
 
