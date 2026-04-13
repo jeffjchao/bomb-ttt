@@ -77,7 +77,7 @@ function HowToPlay({ onClose }) {
             </div>
           </div>
           <p style={{ ...bodyStyle, marginTop: 10 }}>
-            Both actions happen simultaneously — the bomber and mover each make their choice at the same time, and the server resolves the outcome once both have locked in.
+            In multiplayer, both actions happen simultaneously — the bomber and mover each make their choice at the same time, and the server resolves the outcome once both have locked in.
           </p>
         </div>
 
@@ -92,6 +92,10 @@ function HowToPlay({ onClose }) {
             <div style={stepStyle}>
               <span style={{ fontSize: "1.1rem", marginRight: 10, flexShrink: 0 }}>💥</span>
               <span style={stepTextStyle}><strong style={{ color: "#e8e8ed" }}>Bomb hit</strong> — your opponent steps on the bomb you planted. You win, they lose.</span>
+            </div>
+            <div style={stepStyle}>
+              <span style={{ fontSize: "1.1rem", marginRight: 10, flexShrink: 0 }}>🤝</span>
+              <span style={stepTextStyle}><strong style={{ color: "#e8e8ed" }}>Draw</strong> — the board fills up with no winner and no bomb hits.</span>
             </div>
           </div>
         </div>

@@ -17,6 +17,11 @@ const PHASES = {
 
 const POS_LABELS = ["TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"];
 
+// -------- UPDATE THIS to match your Render server URL --------
+const LOG_URL = "https://bomb-ttt-server.onrender.com/log-game";
+// For local testing: "http://localhost:8000/log-game"
+// --------------------------------------------------------------
+
 function checkWinner(board) {
   for (const [a, b, c] of WIN_LINES) {
     if (board[a] && board[a] === board[b] && board[a] === board[c]) {
@@ -469,6 +474,7 @@ export default function BombTicTacToeAI() {
   const [lastBombReveal, setLastBombReveal] = useState(null);
   const timerRef = useRef(null);
   const explodingRef = useRef(false);
+  const gameStartedAt = useRef(null);
 
   // Extreme AI: persistent player behavior profile (survives between games)
   // Structure: { moves: { [turnNumber]: { [cellIndex]: count } }, totalGames: 0 }
@@ -495,6 +501,7 @@ export default function BombTicTacToeAI() {
     setAiThinking(false);
     setLastBombReveal(null);
     explodingRef.current = false;
+    gameStartedAt.current = null;
     currentGameMoves.current = [];
   }, []);
 
@@ -524,8 +531,32 @@ export default function BombTicTacToeAI() {
     });
   }, []);
 
+  // Log completed game to server for analytics
+  const logGameToServer = useCallback((outcome, winnerMark, totalTurns, gameHistory) => {
+    try {
+      fetch(LOG_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "ai",
+          difficulty: difficulty,
+          first_mover_mark: "X",  // Player (X) always moves first in AI mode
+          winner_mark: winnerMark,
+          outcome: outcome,
+          total_turns: totalTurns,
+          started_at: gameStartedAt.current,
+          history: gameHistory,
+        }),
+      }).catch(() => {}); // Silent fail — don't disrupt gameplay
+    } catch (e) {
+      // Logging should never break the game
+    }
+  }, [difficulty]);
+
   // Resolve a move (shared logic for both player and AI placing marks)
   const resolveMove = useCallback((newBoard, movingMark, moveIndex, currentBomb, isPlayerMoving) => {
+    const finalEntry = { turn: turnNumber, player: movingMark, move: moveIndex, bomb: currentBomb };
+
     // Hit bomb?
     if (moveIndex === currentBomb) {
       explodingRef.current = true;
@@ -533,11 +564,12 @@ export default function BombTicTacToeAI() {
       setExplodedCell(moveIndex);
       setShaking(true);
       setTimeout(() => setShaking(false), 500);
-      setHistory((h) => [...h, {
-        turn: turnNumber, player: movingMark, move: moveIndex, bomb: currentBomb, result: "BOOM",
-      }]);
+      const entry = { ...finalEntry, result: "BOOM" };
+      setHistory((h) => [...h, entry]);
       setTimeout(() => {
         finalizeProfile();
+        // Log to server — build full history from current + this entry
+        setHistory((h) => { logGameToServer("bomb", isPlayerMoving ? aiMark : playerMark, turnNumber, h); return h; });
         setResult({
           type: "bomb",
           loser: isPlayerMoving ? "player" : "ai",
@@ -557,11 +589,11 @@ export default function BombTicTacToeAI() {
     if (winResult) {
       setBoard(newBoard);
       setWinLine(winResult.line);
-      setHistory((h) => [...h, {
-        turn: turnNumber, player: movingMark, move: moveIndex, bomb: currentBomb, result: "WIN",
-      }]);
+      const entry = { ...finalEntry, result: "WIN" };
+      setHistory((h) => [...h, entry]);
       setTimeout(() => {
         finalizeProfile();
+        setHistory((h) => { logGameToServer("win", winResult.winner, turnNumber, h); return h; });
         setResult({
           type: "win",
           winner: isPlayerMoving ? "player" : "ai",
@@ -578,11 +610,11 @@ export default function BombTicTacToeAI() {
     // Draw?
     if (isBoardFull(newBoard)) {
       setBoard(newBoard);
-      setHistory((h) => [...h, {
-        turn: turnNumber, player: movingMark, move: moveIndex, bomb: currentBomb, result: "DRAW",
-      }]);
+      const entry = { ...finalEntry, result: "DRAW" };
+      setHistory((h) => [...h, entry]);
       setTimeout(() => {
         finalizeProfile();
+        setHistory((h) => { logGameToServer("draw", null, turnNumber, h); return h; });
         setResult({ type: "draw" });
         setPhase(PHASES.GAME_OVER);
       }, 400);
@@ -590,11 +622,15 @@ export default function BombTicTacToeAI() {
     }
 
     return false;
-  }, [turnNumber, finalizeProfile]);
+  }, [turnNumber, finalizeProfile, logGameToServer]);
 
   // AI bomb phase: AI places bomb, then player moves
   useEffect(() => {
     if (phase !== PHASES.AI_BOMB || !difficulty || explodingRef.current) return;
+    // Record start time on first turn
+    if (turnNumber === 1 && !gameStartedAt.current) {
+      gameStartedAt.current = new Date().toISOString();
+    }
     setAiThinking(true);
     timerRef.current = setTimeout(() => {
       if (explodingRef.current) return;
@@ -997,13 +1033,13 @@ export default function BombTicTacToeAI() {
                 background: "rgba(255,255,255,0.04)", borderRadius: 8, maxWidth: 600, width: "100%",
               }}>
                 <div style={{
-                  fontFamily: "'Space Mono', monospace", fontSize: "1.1rem",  fontWeight: "bold",
+                  fontFamily: "'Space Mono', monospace", fontSize: "0.65rem",
                   color: "rgba(255,255,255,0.2)", letterSpacing: "0.1em",
                   textTransform: "uppercase", marginBottom: 10,
                 }}>Game Log</div>
                 {history.map((h, idx) => (
                   <div key={idx} style={{
-                    fontFamily: "'Space Mono', monospace", fontSize: "0.95rem",
+                    fontFamily: "'Space Mono', monospace", fontSize: "0.75rem",
                     color: "rgba(255,255,255,0.45)", padding: "5px 0",
                     borderBottom: idx < history.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
                     display: "flex", justifyContent: "space-between",
@@ -1014,7 +1050,7 @@ export default function BombTicTacToeAI() {
                       </span>→{POS_LABELS[h.move]}
                     </span>
                     <span>
-                      💣 @ {POS_LABELS[h.bomb]} {h.result === "BOOM" ? "💥" : h.result === "WIN" ? "🏆" : "✓"}
+                      bomb@{POS_LABELS[h.bomb]} {h.result === "BOOM" ? "💥" : h.result === "WIN" ? "🏆" : "✓"}
                     </span>
                   </div>
                 ))}

@@ -690,13 +690,13 @@ export default function BombTTTMultiplayer() {
                 background: "rgba(255,255,255,0.04)", borderRadius: 8, maxWidth: 600, width: "100%",
               }}>
                 <div style={{
-                  fontFamily: "'Space Mono', monospace", fontSize: "1.1rem", fontWeight: "bold",
+                  fontFamily: "'Space Mono', monospace", fontSize: "0.65rem",
                   color: "rgba(255,255,255,0.2)", letterSpacing: "0.1em",
                   textTransform: "uppercase", marginBottom: 10,
                 }}>Game Log</div>
                 {history.map((h, idx) => (
                   <div key={idx} style={{
-                    fontFamily: "'Space Mono', monospace", fontSize: "0.95rem",
+                    fontFamily: "'Space Mono', monospace", fontSize: "0.75rem",
                     color: "rgba(255,255,255,0.45)", padding: "5px 0",
                     borderBottom: idx < history.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
                     display: "flex", justifyContent: "space-between",
@@ -707,7 +707,7 @@ export default function BombTTTMultiplayer() {
                       </span>→{POS_LABELS[h.move]}
                     </span>
                     <span>
-                      💣 @ {POS_LABELS[h.bomb]} {h.result === "BOOM" ? "💥" : h.result === "WIN" ? "🏆" : "✓"}
+                      bomb@{POS_LABELS[h.bomb]} {h.result === "BOOM" ? "💥" : h.result === "WIN" ? "🏆" : "✓"}
                     </span>
                   </div>
                 ))}
