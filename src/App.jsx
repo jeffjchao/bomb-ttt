@@ -65,7 +65,7 @@ function HowToPlay({ onClose }) {
               <div style={stepNumberStyle("#4caf50")}>2</div>
               <div>
                 <strong style={{ color: "#4caf50" }}>Move phase</strong>
-                <span style={stepTextStyle}> — The attacking player places their mark (X or O) on any empty cell.</span>
+                <span style={stepTextStyle}> — The moving player places their mark (<span style={{ color: "#ff5252", fontWeight: 700 }}>X</span> or <span style={{ color: "#448aff", fontWeight: 700 }}>O</span>) on any empty cell.</span>
               </div>
             </div>
             <div style={stepStyle}>
@@ -77,7 +77,7 @@ function HowToPlay({ onClose }) {
             </div>
           </div>
           <p style={{ ...bodyStyle, marginTop: 10 }}>
-            In multiplayer, both actions happen simultaneously — the bomber and mover each make their choice at the same time, and the server resolves the outcome once both have locked in.
+            Both actions happen simultaneously — the bomber and mover each make their choice at the same time, and the server resolves the outcome once both have locked in.
           </p>
         </div>
 
@@ -92,10 +92,6 @@ function HowToPlay({ onClose }) {
             <div style={stepStyle}>
               <span style={{ fontSize: "1.1rem", marginRight: 10, flexShrink: 0 }}>💥</span>
               <span style={stepTextStyle}><strong style={{ color: "#e8e8ed" }}>Bomb hit</strong> — your opponent steps on the bomb you planted. You win, they lose.</span>
-            </div>
-            <div style={stepStyle}>
-              <span style={{ fontSize: "1.1rem", marginRight: 10, flexShrink: 0 }}>🤝</span>
-              <span style={stepTextStyle}><strong style={{ color: "#e8e8ed" }}>Draw</strong> — the board fills up with no winner and no bomb hits.</span>
             </div>
           </div>
         </div>
@@ -243,8 +239,8 @@ function ModeSelect({ onSelect }) {
         BOMB TIC-TAC-TOE
       </h1>
       <div style={{
-        fontFamily: "'Space Mono', monospace", fontSize: "0.7rem",
-        color: "rgba(255,255,255,0.25)", marginBottom: 48,
+        fontFamily: "'Space Mono', monospace", fontSize: "0.7rem", fontWeight: "bold",
+        color: "rgba(255,255,255,0.25)", marginBottom: 24,
         letterSpacing: "0.15em", textTransform: "uppercase",
         position: "relative", zIndex: 1,
         animation: "float-in 0.4s ease-out 0.1s backwards",
@@ -252,10 +248,36 @@ function ModeSelect({ onSelect }) {
         Place your mark. Dodge the bomb.
       </div>
 
+          {/* How to Play button */}
+          <button
+            className="help-btn"
+            onClick={() => setShowHelp(true)}
+            style={{
+              marginTop: 0,
+              marginBottom: 16,
+              background: "none",
+              border: "1px solid rgba(255,255,255,0.4)",
+              borderRadius: 8,
+              padding: "10px 24px",
+              color: "rgba(255,255,255,0.35)",
+              fontFamily: "'Space Mono', monospace", //OLD fontFamily: "'Space Mono', monospace",
+              fontSize: "0.8rem",
+              fontWeight: 900,
+              letterSpacing: "0.08em",
+              cursor: "pointer",
+              position: "relative",
+              zIndex: 1,
+              animation: "float-in 0.4s ease-out 0.3s backwards",
+            }}
+          >
+            ? &nbsp;How to Play
+          </button>
+
       <div style={{
         display: "flex", flexDirection: "column", gap: 16,
         position: "relative", zIndex: 1, width: "min(85vw, 340px)",
       }}>
+
         <button
           className="mode-btn"
           style={{
@@ -314,41 +336,6 @@ function ModeSelect({ onSelect }) {
           </div>
         </button>
       </div>
-
-      {/* How to Play button */}
-      <button
-        className="help-btn"
-        onClick={() => setShowHelp(true)}
-        style={{
-          marginTop: 28,
-          background: "none",
-          border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 8,
-          padding: "10px 24px",
-          color: "rgba(255,255,255,0.35)",
-          fontFamily: "'Space Mono', monospace",
-          fontSize: "0.7rem",
-          letterSpacing: "0.08em",
-          cursor: "pointer",
-          position: "relative",
-          zIndex: 1,
-          animation: "float-in 0.4s ease-out 0.3s backwards",
-        }}
-      >
-        ? &nbsp;How to Play
-      </button>
-
-      <div style={{
-        marginTop: 28, fontFamily: "'Space Mono', monospace",
-        fontSize: "0.5rem", color: "rgba(255,255,255,0.12)",
-        textAlign: "center", maxWidth: 300, lineHeight: 1.7,
-        letterSpacing: "0.03em", position: "relative", zIndex: 1,
-        animation: "float-in 0.4s ease-out 0.35s backwards",
-      }}>
-        Each turn: one player secretly plants a bomb, the other places their mark.
-        Hit the bomb and you lose. Get three in a row to win.
-      </div>
-
       {showHelp && <HowToPlay onClose={() => setShowHelp(false)} />}
     </div>
   );
