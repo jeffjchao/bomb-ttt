@@ -458,6 +458,7 @@ export default function BombTicTacToeAI() {
   const [phase, setPhase] = useState(PHASES.AI_BOMB);
   const [bombCell, setBombCell] = useState(null);
   const [result, setResult] = useState(null);
+  const [showResultOverlay, setShowResultOverlay] = useState(true);
   const [winLine, setWinLine] = useState(null);
   const [explodedCell, setExplodedCell] = useState(null);
   const [shaking, setShaking] = useState(false);
@@ -485,6 +486,7 @@ export default function BombTicTacToeAI() {
     setPhase(PHASES.AI_BOMB);
     setBombCell(null);
     setResult(null);
+    setShowResultOverlay(true);
     setWinLine(null);
     setExplodedCell(null);
     setShaking(false);
@@ -686,14 +688,14 @@ export default function BombTicTacToeAI() {
     let bg = "rgba(255,255,255,0.03)";
     if (isExploded) bg = "rgba(255, 68, 68, 0.25)";
     else if (isWinCell) bg = "rgba(76, 175, 80, 0.15)";
-    else if (isLastBomb) bg = "rgba(255, 152, 0, 0.08)";
+    else if (isLastBomb) bg = "rgba(255, 82, 82, 0.18)";
 
     return {
       width: "100%", aspectRatio: "1",
       display: "flex", alignItems: "center", justifyContent: "center",
       background: bg, border: "none",
       cursor: isClickable ? "pointer" : "default",
-      fontSize: "clamp(2rem, 8vw, 3.5rem)",
+      fontSize: "clamp(2.5rem, 10vw, 5rem)",
       fontFamily: "'Instrument Sans', sans-serif",
       fontWeight: 800,
       color: board[index] ? playerColors[board[index]] : "rgba(255,255,255,0.08)",
@@ -862,7 +864,7 @@ export default function BombTicTacToeAI() {
       }}>
         <div style={{
           display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
-          width: "min(85vw, 340px)",
+          width: "min(90vw, 480px)",
           background: "rgba(255,255,255,0.02)", borderRadius: 12, overflow: "hidden",
           border: "1px solid rgba(255,255,255,0.08)",
           position: "relative", zIndex: 1,
@@ -913,7 +915,7 @@ export default function BombTicTacToeAI() {
 
       {/* History */}
       {history.length > 0 && phase !== PHASES.GAME_OVER && (
-        <div style={{ marginTop: 16, width: "min(85vw, 340px)", position: "relative", zIndex: 1 }}>
+        <div style={{ marginTop: 16, width: "min(90vw, 480px)", position: "relative", zIndex: 1 }}>
           <div style={{
             fontFamily: "'Space Mono', monospace", fontSize: "0.55rem",
             letterSpacing: "0.12em", color: "rgba(255,255,255,0.18)",
@@ -935,8 +937,25 @@ export default function BombTicTacToeAI() {
         </div>
       )}
 
-      {/* Game Over */}
-      {result && (
+      {/* Game Over - floating pill to reshow results when overlay is hidden */}
+      {result && !showResultOverlay && (
+        <button
+          onClick={() => setShowResultOverlay(true)}
+          className="action-btn"
+          style={{
+            position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)",
+            zIndex: 35, background: "rgba(20, 20, 30, 0.85)",
+            border: "1px solid rgba(255,255,255,0.15)",
+            color: "#e8e8ed", padding: "8px 20px", fontSize: "0.75rem",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          Show Results
+        </button>
+      )}
+
+      {/* Game Over Overlay */}
+      {result && showResultOverlay && (
         <div style={{
           position: "absolute", inset: 0,
           background: "rgba(8, 8, 14, 0.92)",
@@ -946,7 +965,11 @@ export default function BombTicTacToeAI() {
         }}>
           <div className="result-card" style={{ textAlign: "center" }}>
             <div style={{ fontSize: "3rem", marginBottom: 16 }}>
-              {result.type === "bomb" ? "💥" : result.type === "win" ? "🏆" : "🤝"}
+              {result.type === "bomb"
+                ? (result.winner === "player" ? "💥" : "💀")
+                : result.type === "win"
+                ? (result.winner === "player" ? "🏆" : "🏳️")
+                : "🤝"}
             </div>
             <div style={{
               fontSize: "1.4rem", fontWeight: 800, marginBottom: 8,
@@ -970,18 +993,18 @@ export default function BombTicTacToeAI() {
             {/* Game log */}
             {history.length > 0 && (
               <div style={{
-                marginTop: 16, marginBottom: 24, padding: 12,
-                background: "rgba(255,255,255,0.04)", borderRadius: 8, maxWidth: 300,
+                marginTop: 16, marginBottom: 24, padding: 16,
+                background: "rgba(255,255,255,0.04)", borderRadius: 8, maxWidth: 600, width: "100%",
               }}>
                 <div style={{
-                  fontFamily: "'Space Mono', monospace", fontSize: "0.5rem",
+                  fontFamily: "'Space Mono', monospace", fontSize: "1.1rem",  fontWeight: "bold",
                   color: "rgba(255,255,255,0.2)", letterSpacing: "0.1em",
-                  textTransform: "uppercase", marginBottom: 8,
+                  textTransform: "uppercase", marginBottom: 10,
                 }}>Game Log</div>
                 {history.map((h, idx) => (
                   <div key={idx} style={{
-                    fontFamily: "'Space Mono', monospace", fontSize: "0.55rem",
-                    color: "rgba(255,255,255,0.45)", padding: "3px 0",
+                    fontFamily: "'Space Mono', monospace", fontSize: "0.95rem",
+                    color: "rgba(255,255,255,0.45)", padding: "5px 0",
                     borderBottom: idx < history.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
                     display: "flex", justifyContent: "space-between",
                   }}>
@@ -991,7 +1014,7 @@ export default function BombTicTacToeAI() {
                       </span>→{POS_LABELS[h.move]}
                     </span>
                     <span>
-                      bomb@{POS_LABELS[h.bomb]} {h.result === "BOOM" ? "💥" : h.result === "WIN" ? "🏆" : "✓"}
+                      💣 @ {POS_LABELS[h.bomb]} {h.result === "BOOM" ? "💥" : h.result === "WIN" ? "🏆" : "✓"}
                     </span>
                   </div>
                 ))}
@@ -999,6 +1022,10 @@ export default function BombTicTacToeAI() {
             )}
 
             <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+              <button className="action-btn"
+                style={{ background: "rgba(255,255,255,0.1)", color: "#e8e8ed" }}
+                onClick={() => setShowResultOverlay(false)}
+              >View Board</button>
               <button className="action-btn"
                 style={{ background: "rgba(255,255,255,0.1)", color: "#e8e8ed" }}
                 onClick={resetGame}

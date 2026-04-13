@@ -205,8 +205,10 @@ export default function BombTTTMultiplayer() {
   const [mySelectedCell, setMySelectedCell] = useState(null);
   const [opponentDisconnected, setOpponentDisconnected] = useState(false);
   const [gameOver, setGameOver] = useState(false);
+  const [showResultOverlay, setShowResultOverlay] = useState(true);
 
   const wsRef = useRef(null);
+  const pingRef = useRef(null);
   const playerColors = { X: "#ff5252", O: "#448aff" };
 
   const sendMessage = useCallback((msg) => {
@@ -221,6 +223,12 @@ export default function BombTTTMultiplayer() {
 
     ws.onopen = () => {
       setLobbyStatus("Connected, waiting...");
+      // Keepalive ping every 25 seconds to prevent Render timeout
+      pingRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: "ping" }));
+        }
+      }, 25000);
     };
 
     ws.onmessage = (event) => {
@@ -233,6 +241,7 @@ export default function BombTTTMultiplayer() {
     };
 
     ws.onclose = () => {
+      if (pingRef.current) clearInterval(pingRef.current);
       if (screen !== "lobby") {
         setOpponentDisconnected(true);
         setGameOver(true);
@@ -326,6 +335,7 @@ export default function BombTTTMultiplayer() {
         setActionLocked(false);
         setTurnNumber(1);
         setGameOver(false);
+        setShowResultOverlay(true);
         break;
 
       case "opponent_disconnected":
@@ -366,10 +376,12 @@ export default function BombTTTMultiplayer() {
     setLastBombReveal(null);
     setMySelectedCell(null);
     setGameOver(false);
+    setShowResultOverlay(true);
     sendMessage({ action: "play_again" });
   };
 
   const handleLeave = () => {
+    if (pingRef.current) clearInterval(pingRef.current);
     if (wsRef.current) wsRef.current.close();
     setScreen("lobby");
     setResult(null);
@@ -379,6 +391,7 @@ export default function BombTTTMultiplayer() {
     setMySelectedCell(null);
     setActionLocked(false);
     setGameOver(false);
+    setShowResultOverlay(true);
   };
 
   // ---- LOBBY ----
@@ -455,14 +468,14 @@ export default function BombTTTMultiplayer() {
     if (isExploded) bg = "rgba(255, 68, 68, 0.25)";
     else if (isWinCell) bg = "rgba(76, 175, 80, 0.15)";
     else if (isMySelection) bg = myRole === "bomber" ? "rgba(213, 0, 249, 0.12)" : "rgba(76, 175, 80, 0.12)";
-    else if (isLastBomb) bg = "rgba(255, 152, 0, 0.08)";
+    else if (isLastBomb) bg = "rgba(255, 82, 82, 0.18)";
 
     return {
       width: "100%", aspectRatio: "1",
       display: "flex", alignItems: "center", justifyContent: "center",
       background: bg, border: "none",
       cursor: isClickable ? "pointer" : "default",
-      fontSize: "clamp(2rem, 8vw, 3.5rem)",
+      fontSize: "clamp(2.5rem, 10vw, 5rem)",
       fontFamily: "'Instrument Sans', sans-serif", fontWeight: 800,
       color: board[index] ? playerColors[board[index]] : "rgba(255,255,255,0.08)",
       transition: "all 0.2s ease",
@@ -564,7 +577,7 @@ export default function BombTTTMultiplayer() {
       <div style={{ animation: shaking ? "screen-shake 0.5s ease-out" : "none" }}>
         <div style={{
           display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
-          width: "min(85vw, 340px)",
+          width: "min(90vw, 480px)",
           background: "rgba(255,255,255,0.02)", borderRadius: 12, overflow: "hidden",
           border: "1px solid rgba(255,255,255,0.08)",
           position: "relative", zIndex: 1,
@@ -613,8 +626,25 @@ export default function BombTTTMultiplayer() {
         </div>
       )}
 
-      {/* Game Over */}
-      {gameOver && (result || opponentDisconnected) && (
+      {/* Game Over - floating pill to reshow results when overlay is hidden */}
+      {gameOver && (result || opponentDisconnected) && !showResultOverlay && (
+        <button
+          onClick={() => setShowResultOverlay(true)}
+          className="action-btn"
+          style={{
+            position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)",
+            zIndex: 35, background: "rgba(20, 20, 30, 0.85)",
+            border: "1px solid rgba(255,255,255,0.15)",
+            color: "#e8e8ed", padding: "8px 20px", fontSize: "0.75rem",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          Show Results
+        </button>
+      )}
+
+      {/* Game Over Overlay */}
+      {gameOver && (result || opponentDisconnected) && showResultOverlay && (
         <div style={{
           position: "absolute", inset: 0,
           background: "rgba(8, 8, 14, 0.92)",
@@ -633,7 +663,11 @@ export default function BombTTTMultiplayer() {
             ) : result && (
               <>
                 <div style={{ fontSize: "3rem", marginBottom: 16 }}>
-                  {result.type === "bomb" ? "💥" : result.type === "win" ? "🏆" : "🤝"}
+                  {result.type === "bomb"
+                    ? (result.winnerMark === myMark ? "💥" : "💀")
+                    : result.type === "win"
+                    ? (result.winnerMark === myMark ? "🏆" : "🏳️")
+                    : "🤝"}
                 </div>
                 <div style={{
                   fontSize: "1.4rem", fontWeight: 800, marginBottom: 8,
@@ -652,18 +686,18 @@ export default function BombTTTMultiplayer() {
             {/* Game log */}
             {history.length > 0 && (
               <div style={{
-                marginTop: 16, marginBottom: 24, padding: 12,
-                background: "rgba(255,255,255,0.04)", borderRadius: 8, maxWidth: 300,
+                marginTop: 16, marginBottom: 24, padding: 16,
+                background: "rgba(255,255,255,0.04)", borderRadius: 8, maxWidth: 600, width: "100%",
               }}>
                 <div style={{
-                  fontFamily: "'Space Mono', monospace", fontSize: "0.5rem",
+                  fontFamily: "'Space Mono', monospace", fontSize: "1.1rem", fontWeight: "bold",
                   color: "rgba(255,255,255,0.2)", letterSpacing: "0.1em",
-                  textTransform: "uppercase", marginBottom: 8,
+                  textTransform: "uppercase", marginBottom: 10,
                 }}>Game Log</div>
                 {history.map((h, idx) => (
                   <div key={idx} style={{
-                    fontFamily: "'Space Mono', monospace", fontSize: "0.55rem",
-                    color: "rgba(255,255,255,0.45)", padding: "3px 0",
+                    fontFamily: "'Space Mono', monospace", fontSize: "0.95rem",
+                    color: "rgba(255,255,255,0.45)", padding: "5px 0",
                     borderBottom: idx < history.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
                     display: "flex", justifyContent: "space-between",
                   }}>
@@ -673,7 +707,7 @@ export default function BombTTTMultiplayer() {
                       </span>→{POS_LABELS[h.move]}
                     </span>
                     <span>
-                      bomb@{POS_LABELS[h.bomb]} {h.result === "BOOM" ? "💥" : h.result === "WIN" ? "🏆" : "✓"}
+                      💣 @ {POS_LABELS[h.bomb]} {h.result === "BOOM" ? "💥" : h.result === "WIN" ? "🏆" : "✓"}
                     </span>
                   </div>
                 ))}
@@ -681,6 +715,11 @@ export default function BombTTTMultiplayer() {
             )}
 
             <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+              <button className="action-btn" onClick={() => setShowResultOverlay(false)} style={{
+                background: "rgba(255,255,255,0.1)", color: "#e8e8ed",
+              }}>
+                View Board
+              </button>
               {!opponentDisconnected && (
                 <button className="action-btn" onClick={handlePlayAgain} style={{
                   background: "rgba(255,255,255,0.1)", color: "#e8e8ed",
