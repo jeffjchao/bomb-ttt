@@ -39,59 +39,121 @@ function getEmpty(board) {
   return board.map((c, i) => (c === EMPTY ? i : -1)).filter((i) => i >= 0);
 }
 
-// ------- AI LOGIC -------
+// ------- CELL SCORING SYSTEM -------
 
-function findWinningMove(board, mark) {
+function scoreCell(board, cell, mark, opponentMark) {
+  // Returns a numeric score for placing `mark` in `cell`
+  // Components: line potential + fork creation + opponent fork disruption
+  let score = 0;
+
+  // Component 1: Line potential
+  // For each win line through this cell, evaluate its state
+  for (const line of WIN_LINES) {
+    if (!line.includes(cell)) continue;
+    const myCount = line.filter((i) => board[i] === mark).length;
+    const oppCount = line.filter((i) => board[i] === opponentMark).length;
+
+    if (oppCount === 0 && myCount === 1) {
+      score += 2; // Open line with my progress
+    } else if (oppCount === 0 && myCount === 0) {
+      score += 1; // Completely empty line
+    }
+    // Lines with opponent marks: +0 (blocked)
+  }
+
+  // Component 2: Fork creation
+  // Simulate placing mark here, count resulting threats
+  const testBoard = [...board];
+  testBoard[cell] = mark;
+  let threatCount = 0;
   for (const [a, b, c] of WIN_LINES) {
-    const cells = [board[a], board[b], board[c]];
-    const markCount = cells.filter((x) => x === mark).length;
-    const emptyCount = cells.filter((x) => x === EMPTY).length;
-    if (markCount === 2 && emptyCount === 1) {
-      return [a, b, c].find((i) => board[i] === EMPTY);
+    const cells = [testBoard[a], testBoard[b], testBoard[c]];
+    if (cells.filter((x) => x === mark).length === 2 && cells.filter((x) => x === EMPTY).length === 1) {
+      threatCount++;
     }
   }
-  return null;
+  if (threatCount >= 2) {
+    score += 6; // Fork — multiple threats, opponent can only bomb one
+  } else if (threatCount === 1) {
+    score += 3; // Single threat
+  }
+
+  // Component 3: Opponent fork disruption
+  // Simulate opponent placing here, count their resulting threats
+  const oppTestBoard = [...board];
+  oppTestBoard[cell] = opponentMark;
+  let oppThreatCount = 0;
+  for (const [a, b, c] of WIN_LINES) {
+    const cells = [oppTestBoard[a], oppTestBoard[b], oppTestBoard[c]];
+    if (cells.filter((x) => x === opponentMark).length === 2 && cells.filter((x) => x === EMPTY).length === 1) {
+      oppThreatCount++;
+    }
+  }
+  if (oppThreatCount >= 2) {
+    score += 4; // Disrupts opponent fork
+  } else if (oppThreatCount === 1) {
+    score += 2; // Disrupts single opponent threat
+  }
+
+  return score;
 }
 
-function scorePosition(index) {
-  // Center > corners > edges
-  if (index === 4) return 3;
-  if ([0, 2, 6, 8].includes(index)) return 2;
-  return 1;
+function scoreCellsForMark(board, mark, opponentMark) {
+  // Score all empty cells and return sorted array of { cell, score }
+  const empty = getEmpty(board);
+  const scored = empty.map((cell) => ({
+    cell,
+    score: scoreCell(board, cell, mark, opponentMark),
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+function pickBestOrSecondBest(scoredCells) {
+  // 50/50 between the highest-scored cell and the second-highest
+  // If there's only one cell, return it
+  if (scoredCells.length === 0) return null;
+  if (scoredCells.length === 1) return scoredCells[0].cell;
+
+  // Find the best and second best (may have ties)
+  const best = scoredCells[0];
+  // Second best is the first cell with a lower score than best
+  const secondBest = scoredCells.find((c) => c.score < best.score) || scoredCells[1];
+
+  if (Math.random() < 0.5) {
+    return best.cell;
+  }
+  return secondBest.cell;
 }
 
 // ------- PLAYER BEHAVIOR TRACKING (Extreme AI) -------
 
-function predictFromProfile(playerProfile, turnNumber, availableCells) {
-  if (!playerProfile || !playerProfile.moves) return null;
-  const turnData = playerProfile.moves[turnNumber] || {};
-  const totalSamples = Object.values(turnData).reduce((a, b) => a + b, 0);
-  if (totalSamples < 3) return null;
+function getGreedinessRatio(playerProfile, empty, board, playerMark, aiMark) {
+  // Track how often the player plays in the "best" cell vs other cells
+  // Returns null if insufficient data, otherwise a ratio 0-1
+  if (!playerProfile || !playerProfile.history || playerProfile.history.length < 3) {
+    return null;
+  }
 
-  const probs = {};
-  let totalWeight = 0;
-  for (const cell of availableCells) {
-    const freq = turnData[cell] || 0;
-    // Smoothing: small base probability so untried cells aren't completely ignored
-    const weight = freq + 0.3;
-    probs[cell] = weight;
-    totalWeight += weight;
-  }
-  for (const cell of availableCells) {
-    probs[cell] /= totalWeight;
-  }
-  return probs;
-}
+  let bestPlays = 0;
+  let totalPlays = 0;
 
-function weightedRandomPick(probs) {
-  const entries = Object.entries(probs).map(([k, v]) => [parseInt(k), v]);
-  const roll = Math.random();
-  let cumulative = 0;
-  for (const [cell, prob] of entries) {
-    cumulative += prob;
-    if (roll <= cumulative) return cell;
+  for (const game of playerProfile.history) {
+    for (const turn of game) {
+      if (turn.mark !== playerMark) continue;
+      // turn.bestCell was the objectively best cell at the time
+      // turn.playedCell was what the player actually played
+      if (turn.bestCell !== null && turn.bestCell !== undefined) {
+        totalPlays++;
+        if (turn.playedCell === turn.bestCell) {
+          bestPlays++;
+        }
+      }
+    }
   }
-  return entries[entries.length - 1][0];
+
+  if (totalPlays < 5) return null; // Need enough samples
+  return bestPlays / totalPlays;
 }
 
 // ------- AI LOGIC -------
@@ -100,228 +162,70 @@ function aiChooseMove(board, aiMark, playerMark, difficulty, playerProfile) {
   const empty = getEmpty(board);
   if (empty.length === 0) return null;
 
-  // Even on easy, always take a win
-  const winMove = findWinningMove(board, aiMark);
-  if (winMove !== null) return winMove;
-
+  // Easy: mostly random
   if (difficulty === "easy") {
-    // Random with slight preference for center/corners
-    if (Math.random() < 0.3) {
-      const good = empty.filter((i) => scorePosition(i) >= 2);
-      if (good.length > 0) return good[Math.floor(Math.random() * good.length)];
-    }
     return empty[Math.floor(Math.random() * empty.length)];
   }
 
-  // Block player win
-  const blockMove = findWinningMove(board, playerMark);
-  if (blockMove !== null) return blockMove;
-
+  // Medium: plays "perfect" Tic-Tac-Toe, ignorant of bombs
+  // Always takes the best move — no bomb-risk awareness
   if (difficulty === "medium") {
-    // Decent positional play with some randomness
-    if (Math.random() < 0.2) {
-      return empty[Math.floor(Math.random() * empty.length)];
-    }
-    // Prefer center, then corners, then edges
-    const sorted = [...empty].sort((a, b) => scorePosition(b) - scorePosition(a));
-    return sorted[0];
+    const scored = scoreCellsForMark(board, aiMark, playerMark);
+    return scored[0].cell;
   }
 
-  // Hard & Extreme: fork detection + adaptive positional play
-  // (Extreme uses the same move logic as hard — its advantage is in bomb prediction)
-  const filledCount = 9 - empty.length;
-
-  // Opening moves (first 2 AI moves): vary response to avoid being predictable
-  if (filledCount <= 2) {
-    // If player opened with a corner, don't always take center — mix in opposite corner
-    const corners = [0, 2, 6, 8];
-    const playerCorner = corners.find((c) => board[c] === playerMark);
-    if (playerCorner !== undefined && board[4] === EMPTY) {
-      // 50/50 between center and a random available corner
-      const availCorners = corners.filter((c) => board[c] === EMPTY);
-      if (Math.random() < 0.5 && availCorners.length > 0) {
-        return availCorners[Math.floor(Math.random() * availCorners.length)];
-      }
-      return 4;
-    }
-    // If player opened center, take a random corner
-    if (board[4] === playerMark) {
-      const availCorners = corners.filter((c) => board[c] === EMPTY);
-      if (availCorners.length > 0) return availCorners[Math.floor(Math.random() * availCorners.length)];
-    }
-    // If player opened edge, mix between center and adjacent corners
-    const edges = [1, 3, 5, 7];
-    const playerEdge = edges.find((c) => board[c] === playerMark);
-    if (playerEdge !== undefined) {
-      const adjacentCorners = {
-        1: [0, 2], 3: [0, 6], 5: [2, 8], 7: [6, 8],
-      };
-      const candidates = [4, ...adjacentCorners[playerEdge]].filter((c) => board[c] === EMPTY);
-      return candidates[Math.floor(Math.random() * candidates.length)];
-    }
-    // Fallback: random good cell
-    const goodCells = [4, 0, 2, 6, 8].filter((c) => board[c] === EMPTY);
-    return goodCells[Math.floor(Math.random() * goodCells.length)];
-  }
-
-  // Check for fork opportunities (two ways to win)
-  for (const cell of empty) {
-    const testBoard = [...board];
-    testBoard[cell] = aiMark;
-    let winningMoves = 0;
-    for (const [a, b, c] of WIN_LINES) {
-      const cells = [testBoard[a], testBoard[b], testBoard[c]];
-      if (cells.filter((x) => x === aiMark).length === 2 && cells.filter((x) => x === EMPTY).length === 1) {
-        winningMoves++;
-      }
-    }
-    if (winningMoves >= 2) return cell;
-  }
-
-  // Block player forks
-  for (const cell of empty) {
-    const testBoard = [...board];
-    testBoard[cell] = playerMark;
-    let winningMoves = 0;
-    for (const [a, b, c] of WIN_LINES) {
-      const cells = [testBoard[a], testBoard[b], testBoard[c]];
-      if (cells.filter((x) => x === playerMark).length === 2 && cells.filter((x) => x === EMPTY).length === 1) {
-        winningMoves++;
-      }
-    }
-    if (winningMoves >= 2) return cell;
-  }
-
-  // Mid/late game: positional preference with some randomness to stay unpredictable
-  const scored = empty.map((i) => ({ i, s: scorePosition(i) + Math.random() * 1.2 }));
-  scored.sort((a, b) => b.s - a.s);
-  return scored[0].i;
+  // Hard & Extreme: score cells, then 50/50 between best and second-best
+  const scored = scoreCellsForMark(board, aiMark, playerMark);
+  return pickBestOrSecondBest(scored);
 }
 
 function aiChooseBomb(board, aiMark, playerMark, difficulty, playerProfile) {
   const empty = getEmpty(board);
   if (empty.length === 0) return null;
 
+  // Easy: random
   if (difficulty === "easy") {
     return empty[Math.floor(Math.random() * empty.length)];
   }
 
-  // Predict where the player will move — bomb that cell
-  // Most likely: player takes a winning move
-  const playerWin = findWinningMove(board, playerMark);
-  if (playerWin !== null) {
-    if (difficulty === "hard" || difficulty === "extreme") return playerWin;
-    // Medium: 60% chance to find it
-    if (Math.random() < 0.6) return playerWin;
-  }
+  // Score cells from the PLAYER's perspective — where would they want to play?
+  const playerScored = scoreCellsForMark(board, playerMark, aiMark);
 
-  // Next likely: player blocks AI win
-  const aiWin = findWinningMove(board, aiMark);
-  if (aiWin !== null && (difficulty === "hard" || difficulty === "extreme")) {
-    if (Math.random() < 0.5) return aiWin;
-  }
-
+  // Medium: 60% chance to bomb the player's best cell, otherwise random
   if (difficulty === "medium") {
-    // Bomb high-value positions that are empty
-    const weighted = empty.map((i) => ({ i, s: scorePosition(i) + Math.random() }));
-    weighted.sort((a, b) => b.s - a.s);
-    return weighted[0].i;
+    if (playerScored.length > 0 && Math.random() < 0.6) {
+      return playerScored[0].cell;
+    }
+    return empty[Math.floor(Math.random() * empty.length)];
   }
 
-  // Extreme: blend player profile predictions with strategic analysis
+  // Hard: 50/50 between player's best and second-best cell
+  if (difficulty === "hard") {
+    return pickBestOrSecondBest(playerScored);
+  }
+
+  // Extreme: adapt bomb placement based on player's greediness ratio
   if (difficulty === "extreme") {
-    const filledCount = 9 - empty.length;
-    // Determine which player turn number this is (how many X moves have been made)
-    const playerMoveNumber = board.filter((c) => c === playerMark).length + 1;
-    const profilePrediction = predictFromProfile(playerProfile, playerMoveNumber, empty);
+    const greediness = getGreedinessRatio(playerProfile, empty, board, playerMark, aiMark);
 
-    if (profilePrediction) {
-      // Blend profile prediction (60%) with strategic scoring (40%)
-      const strategicScores = {};
-      let maxStrategic = 0;
-      for (const cell of empty) {
-        const testBoard = [...board];
-        testBoard[cell] = playerMark;
-        let forkCount = 0;
-        for (const [a, b, c] of WIN_LINES) {
-          const cells = [testBoard[a], testBoard[b], testBoard[c]];
-          if (cells.filter((x) => x === playerMark).length === 2 && cells.filter((x) => x === EMPTY).length === 1) {
-            forkCount++;
-          }
-        }
-        const s = forkCount * 3 + scorePosition(cell);
-        strategicScores[cell] = s;
-        if (s > maxStrategic) maxStrategic = s;
+    if (greediness !== null && playerScored.length >= 2) {
+      const best = playerScored[0];
+      const secondBest = playerScored.find((c) => c.score < best.score) || playerScored[1];
+
+      // If player is greedy (plays best cell often), bomb best cell more often
+      // If player is cautious, bomb second-best more often
+      if (Math.random() < greediness) {
+        return best.cell;
       }
-
-      // Normalize strategic scores to 0-1
-      const blended = {};
-      for (const cell of empty) {
-        const strat = maxStrategic > 0 ? strategicScores[cell] / maxStrategic : 0;
-        blended[cell] = profilePrediction[cell] * 0.6 + strat * 0.4;
-      }
-
-      // Normalize blended scores to probabilities
-      const total = Object.values(blended).reduce((a, b) => a + b, 0);
-      for (const cell of empty) {
-        blended[cell] /= total;
-      }
-
-      return weightedRandomPick(blended);
+      return secondBest.cell;
     }
 
-    // Not enough data yet — fall through to hard AI logic
+    // Not enough data — fall back to hard logic (50/50)
+    return pickBestOrSecondBest(playerScored);
   }
 
-  // Hard (and extreme fallback): predict player forks + opening patterns
-  const filledCount = 9 - empty.length;
-
-  // Early game bomb prediction: think about what the player is likely setting up
-  if (filledCount <= 2) {
-    const corners = [0, 2, 6, 8];
-    const playerCorners = corners.filter((c) => board[c] === playerMark);
-
-    // If player opened corner, they'll likely go for the opposite corner or an adjacent one
-    if (playerCorners.length === 1) {
-      const opposites = { 0: 8, 2: 6, 6: 2, 8: 0 };
-      const adjacent = { 0: [2, 6], 2: [0, 8], 6: [0, 8], 8: [2, 6] };
-      const candidates = [
-        opposites[playerCorners[0]],
-        ...adjacent[playerCorners[0]],
-      ].filter((c) => board[c] === EMPTY);
-      // Also consider center as a target
-      if (board[4] === EMPTY) candidates.push(4);
-      if (candidates.length > 0) return candidates[Math.floor(Math.random() * candidates.length)];
-    }
-
-    // If player opened center, they'll likely go for a corner
-    if (board[4] === playerMark) {
-      const availCorners = corners.filter((c) => board[c] === EMPTY);
-      if (availCorners.length > 0) return availCorners[Math.floor(Math.random() * availCorners.length)];
-    }
-  }
-
-  // Mid/late game: score cells by how strategically valuable they are to the player
-  let bestCell = null;
-  let bestForkScore = -1;
-  for (const cell of empty) {
-    const testBoard = [...board];
-    testBoard[cell] = playerMark;
-    let forkCount = 0;
-    for (const [a, b, c] of WIN_LINES) {
-      const cells = [testBoard[a], testBoard[b], testBoard[c]];
-      if (cells.filter((x) => x === playerMark).length === 2 && cells.filter((x) => x === EMPTY).length === 1) {
-        forkCount++;
-      }
-    }
-    // Add randomness so the bomb placement isn't fully predictable either
-    const score = forkCount * 3 + scorePosition(cell) + Math.random() * 1.5;
-    if (score > bestForkScore) {
-      bestForkScore = score;
-      bestCell = cell;
-    }
-  }
-  return bestCell ?? empty[Math.floor(Math.random() * empty.length)];
+  // Fallback
+  return empty[Math.floor(Math.random() * empty.length)];
 }
 
 // ------- COMPONENTS -------
@@ -477,9 +381,10 @@ export default function BombTicTacToeAI() {
   const gameStartedAt = useRef(null);
 
   // Extreme AI: persistent player behavior profile (survives between games)
-  // Structure: { moves: { [turnNumber]: { [cellIndex]: count } }, totalGames: 0 }
-  const [playerProfile, setPlayerProfile] = useState({ moves: {}, totalGames: 0 });
-  // Track moves within the current game so we can log them all at game end
+  // Tracks whether the player tends to play in the "best" scored cell or not
+  // Structure: { history: [ [ {mark, bestCell, playedCell}, ... ], ... ], totalGames: 0 }
+  const [playerProfile, setPlayerProfile] = useState({ history: [], totalGames: 0 });
+  // Track moves within the current game: array of {bestCell, playedCell, mark}
   const currentGameMoves = useRef([]);
 
   const playerMark = "X";
@@ -505,30 +410,24 @@ export default function BombTicTacToeAI() {
     currentGameMoves.current = [];
   }, []);
 
-  // Record a player move into the current game tracker
-  const recordPlayerMove = useCallback((cellIndex) => {
-    currentGameMoves.current.push(cellIndex);
+  // Record a player move with what the "best" cell was at that moment
+  const recordPlayerMove = useCallback((cellIndex, currentBoard) => {
+    const scored = scoreCellsForMark(currentBoard, playerMark, aiMark);
+    const bestCell = scored.length > 0 ? scored[0].cell : null;
+    currentGameMoves.current.push({
+      mark: playerMark,
+      bestCell: bestCell,
+      playedCell: cellIndex,
+    });
   }, []);
 
-  // At game end, merge all recorded player moves into the persistent profile
+  // At game end, merge recorded moves into the persistent profile
   const finalizeProfile = useCallback(() => {
     if (currentGameMoves.current.length === 0) return;
-    setPlayerProfile((prev) => {
-      const updated = {
-        moves: { ...prev.moves },
-        totalGames: prev.totalGames + 1,
-      };
-      currentGameMoves.current.forEach((cell, idx) => {
-        const moveNum = idx + 1; // 1-indexed: player's 1st move, 2nd move, etc.
-        if (!updated.moves[moveNum]) {
-          updated.moves[moveNum] = {};
-        } else {
-          updated.moves[moveNum] = { ...updated.moves[moveNum] };
-        }
-        updated.moves[moveNum][cell] = (updated.moves[moveNum][cell] || 0) + 1;
-      });
-      return updated;
-    });
+    setPlayerProfile((prev) => ({
+      history: [...prev.history, [...currentGameMoves.current]],
+      totalGames: prev.totalGames + 1,
+    }));
   }, []);
 
   // Log completed game to server for analytics
@@ -676,7 +575,7 @@ export default function BombTicTacToeAI() {
 
     if (phase === PHASES.PLAYER_MOVE) {
       // Player places their X — record it for the profile
-      recordPlayerMove(index);
+      recordPlayerMove(index, board);
       const newBoard = [...board];
       newBoard[index] = playerMark;
 
@@ -1033,13 +932,13 @@ export default function BombTicTacToeAI() {
                 background: "rgba(255,255,255,0.04)", borderRadius: 8, maxWidth: 600, width: "100%",
               }}>
                 <div style={{
-                  fontFamily: "'Space Mono', monospace", fontSize: "1.1rem", fontWeight: "bold",
+                  fontFamily: "'Space Mono', monospace", fontSize: "0.65rem",
                   color: "rgba(255,255,255,0.2)", letterSpacing: "0.1em",
                   textTransform: "uppercase", marginBottom: 10,
                 }}>Game Log</div>
                 {history.map((h, idx) => (
                   <div key={idx} style={{
-                    fontFamily: "'Space Mono', monospace", fontSize: "0.95rem",
+                    fontFamily: "'Space Mono', monospace", fontSize: "0.75rem",
                     color: "rgba(255,255,255,0.45)", padding: "5px 0",
                     borderBottom: idx < history.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
                     display: "flex", justifyContent: "space-between",
