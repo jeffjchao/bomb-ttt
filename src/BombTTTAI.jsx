@@ -53,7 +53,9 @@ function scoreCell(board, cell, mark, opponentMark) {
     const myCount = line.filter((i) => board[i] === mark).length;
     const oppCount = line.filter((i) => board[i] === opponentMark).length;
 
-    if (oppCount === 0 && myCount === 1) {
+    if (oppCount === 0 && myCount === 2) {
+      score += 10; // This cell completes a win!
+    } else if (oppCount === 0 && myCount === 1) {
       score += 2; // Open line with my progress
     } else if (oppCount === 0 && myCount === 0) {
       score += 1; // Completely empty line
@@ -78,7 +80,24 @@ function scoreCell(board, cell, mark, opponentMark) {
     score += 3; // Single threat
   }
 
-  // Component 3: Opponent fork disruption
+  // Component 3: Opponent threat disruption
+  // First check: does this cell block an IMMEDIATE opponent win?
+  // (opponent already has 2 marks in a line through this cell with this cell empty)
+  let blocksImmediateWin = false;
+  for (const line of WIN_LINES) {
+    if (!line.includes(cell)) continue;
+    const oppCount = line.filter((i) => board[i] === opponentMark).length;
+    const emptyCount = line.filter((i) => board[i] === EMPTY).length;
+    if (oppCount === 2 && emptyCount === 1 && board[cell] === EMPTY) {
+      blocksImmediateWin = true;
+      break;
+    }
+  }
+  if (blocksImmediateWin) {
+    score += 8; // Blocks an immediate winning move
+  }
+
+  // Then check: does placing here disrupt future opponent threats/forks?
   // Simulate opponent placing here, count their resulting threats
   const oppTestBoard = [...board];
   oppTestBoard[cell] = opponentMark;
@@ -91,8 +110,8 @@ function scoreCell(board, cell, mark, opponentMark) {
   }
   if (oppThreatCount >= 2) {
     score += 4; // Disrupts opponent fork
-  } else if (oppThreatCount === 1) {
-    score += 2; // Disrupts single opponent threat
+  } else if (oppThreatCount === 1 && !blocksImmediateWin) {
+    score += 2; // Disrupts single future threat (don't double-count with immediate block)
   }
 
   return score;
@@ -111,49 +130,56 @@ function scoreCellsForMark(board, mark, opponentMark) {
 
 function pickBestOrSecondBest(scoredCells) {
   // 50/50 between the highest-scored cell and the second-highest
-  // If there's only one cell, return it
+  // When multiple cells tie, randomly pick among the tied cells
   if (scoredCells.length === 0) return null;
   if (scoredCells.length === 1) return scoredCells[0].cell;
 
-  // Find the best and second best (may have ties)
-  const best = scoredCells[0];
-  // Second best is the first cell with a lower score than best
-  const secondBest = scoredCells.find((c) => c.score < best.score) || scoredCells[1];
+  const bestScore = scoredCells[0].score;
+  const bestTied = scoredCells.filter((c) => c.score === bestScore);
+
+  const secondScore = scoredCells.find((c) => c.score < bestScore)?.score;
+  const secondTied = secondScore != null
+    ? scoredCells.filter((c) => c.score === secondScore)
+    : [];
 
   if (Math.random() < 0.5) {
-    return best.cell;
+    return bestTied[Math.floor(Math.random() * bestTied.length)].cell;
   }
-  return secondBest.cell;
+  if (secondTied.length > 0) {
+    return secondTied[Math.floor(Math.random() * secondTied.length)].cell;
+  }
+  return bestTied[Math.floor(Math.random() * bestTied.length)].cell;
 }
 
 // ------- PLAYER BEHAVIOR TRACKING (Extreme AI) -------
 
-function getGreedinessRatio(playerProfile, empty, board, playerMark, aiMark) {
-  // Track how often the player plays in the "best" cell vs other cells
-  // Returns null if insufficient data, otherwise a ratio 0-1
-  if (!playerProfile || !playerProfile.history || playerProfile.history.length < 3) {
-    return null;
-  }
+const ROLLING_WINDOW = 15; // Track last 15 actions of each type
+const MIN_SAMPLES = 5;     // Need at least 5 samples before adapting
+
+function getGreedinessRatio(moveHistory) {
+  // How often does the player play in the "best" cell?
+  // Uses only the last ROLLING_WINDOW move entries
+  const recent = moveHistory.slice(-ROLLING_WINDOW);
+  if (recent.length < MIN_SAMPLES) return null;
 
   let bestPlays = 0;
-  let totalPlays = 0;
-
-  for (const game of playerProfile.history) {
-    for (const turn of game) {
-      if (turn.mark !== playerMark) continue;
-      // turn.bestCell was the objectively best cell at the time
-      // turn.playedCell was what the player actually played
-      if (turn.bestCell !== null && turn.bestCell !== undefined) {
-        totalPlays++;
-        if (turn.playedCell === turn.bestCell) {
-          bestPlays++;
-        }
-      }
-    }
+  for (const turn of recent) {
+    if (turn.playedCell === turn.bestCell) bestPlays++;
   }
+  return bestPlays / recent.length;
+}
 
-  if (totalPlays < 5) return null; // Need enough samples
-  return bestPlays / totalPlays;
+function getBombAggressivenessRatio(bombHistory) {
+  // How often does the player bomb the AI's "best" cell?
+  // Uses only the last ROLLING_WINDOW bomb entries
+  const recent = bombHistory.slice(-ROLLING_WINDOW);
+  if (recent.length < MIN_SAMPLES) return null;
+
+  let bestBombs = 0;
+  for (const turn of recent) {
+    if (turn.bombedCell === turn.aiBestCell) bestBombs++;
+  }
+  return bestBombs / recent.length;
 }
 
 // ------- AI LOGIC -------
@@ -174,8 +200,42 @@ function aiChooseMove(board, aiMark, playerMark, difficulty, playerProfile) {
     return scored[0].cell;
   }
 
-  // Hard & Extreme: score cells, then 50/50 between best and second-best
+  // Hard & Extreme: score cells, then pick based on difficulty
   const scored = scoreCellsForMark(board, aiMark, playerMark);
+
+  if (difficulty === "hard") {
+    return pickBestOrSecondBest(scored);
+  }
+
+  // Extreme: adapt move selection based on player's bomb aggressiveness
+  // If player consistently bombs the AI's best cell, play second-best more often
+  if (difficulty === "extreme") {
+    const bombAggro = getBombAggressivenessRatio(playerProfile.bombHistory);
+
+    if (bombAggro !== null && scored.length >= 2) {
+      const bestScore = scored[0].score;
+      const bestTied = scored.filter((c) => c.score === bestScore);
+      const secondScore = scored.find((c) => c.score < bestScore)?.score;
+      const secondTied = secondScore != null
+        ? scored.filter((c) => c.score === secondScore)
+        : [];
+
+      // If player aggressively bombs best cell (high ratio), avoid best cell
+      // bombAggro = 0.8 means player bombs best 80% of the time
+      // So AI should play best only 20% of the time (1 - bombAggro)
+      if (Math.random() < (1 - bombAggro)) {
+        return bestTied[Math.floor(Math.random() * bestTied.length)].cell;
+      }
+      if (secondTied.length > 0) {
+        return secondTied[Math.floor(Math.random() * secondTied.length)].cell;
+      }
+      return bestTied[Math.floor(Math.random() * bestTied.length)].cell;
+    }
+
+    // Not enough data — fall back to hard logic (50/50)
+    return pickBestOrSecondBest(scored);
+  }
+
   return pickBestOrSecondBest(scored);
 }
 
@@ -206,18 +266,24 @@ function aiChooseBomb(board, aiMark, playerMark, difficulty, playerProfile) {
 
   // Extreme: adapt bomb placement based on player's greediness ratio
   if (difficulty === "extreme") {
-    const greediness = getGreedinessRatio(playerProfile, empty, board, playerMark, aiMark);
+    const greediness = getGreedinessRatio(playerProfile.moveHistory);
 
     if (greediness !== null && playerScored.length >= 2) {
-      const best = playerScored[0];
-      const secondBest = playerScored.find((c) => c.score < best.score) || playerScored[1];
+      const bestScore = playerScored[0].score;
+      const bestTied = playerScored.filter((c) => c.score === bestScore);
+      const secondScore = playerScored.find((c) => c.score < bestScore)?.score;
+      const secondTied = secondScore != null
+        ? playerScored.filter((c) => c.score === secondScore)
+        : [];
 
       // If player is greedy (plays best cell often), bomb best cell more often
-      // If player is cautious, bomb second-best more often
       if (Math.random() < greediness) {
-        return best.cell;
+        return bestTied[Math.floor(Math.random() * bestTied.length)].cell;
       }
-      return secondBest.cell;
+      if (secondTied.length > 0) {
+        return secondTied[Math.floor(Math.random() * secondTied.length)].cell;
+      }
+      return bestTied[Math.floor(Math.random() * bestTied.length)].cell;
     }
 
     // Not enough data — fall back to hard logic (50/50)
@@ -269,7 +335,7 @@ function ExplosionEffect({ cellIndex }) {
   );
 }
 
-function DifficultySelect({ onSelect, gamesPlayed }) {
+function DifficultySelect({ onSelect, turnsTracked }) {
   const levels = [
     { key: "easy", label: "Easy", desc: "Random moves, no bomb prediction", color: "#4caf50" },
     { key: "medium", label: "Medium", desc: "Decent strategy, some bomb prediction", color: "#ff9800" },
@@ -344,12 +410,12 @@ function DifficultySelect({ onSelect, gamesPlayed }) {
             <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.4)" }}>
               {lvl.desc}
             </div>
-            {lvl.key === "extreme" && gamesPlayed > 0 && (
+            {lvl.key === "extreme" && turnsTracked > 0 && (
               <div style={{
                 fontSize: "0.6rem", color: "#d500f9", marginTop: 4,
                 fontFamily: "'Space Mono', monospace", letterSpacing: "0.08em",
               }}>
-                {gamesPlayed} game{gamesPlayed !== 1 ? "s" : ""} analyzed
+                {turnsTracked} turn{turnsTracked !== 1 ? "s" : ""} tracked
               </div>
             )}
           </button>
@@ -380,12 +446,13 @@ export default function BombTicTacToeAI() {
   const explodingRef = useRef(false);
   const gameStartedAt = useRef(null);
 
-  // Extreme AI: persistent player behavior profile (survives between games)
-  // Tracks whether the player tends to play in the "best" scored cell or not
-  // Structure: { history: [ [ {mark, bestCell, playedCell}, ... ], ... ], totalGames: 0 }
-  const [playerProfile, setPlayerProfile] = useState({ history: [], totalGames: 0 });
-  // Track moves within the current game: array of {bestCell, playedCell, mark}
-  const currentGameMoves = useRef([]);
+  // Extreme AI: rolling window of recent player actions
+  // moveHistory tracks player mark placements, bombHistory tracks player bomb placements
+  // Both are flat arrays that persist across games within a session
+  const [playerProfile, setPlayerProfile] = useState({
+    moveHistory: [],  // [{bestCell, playedCell}, ...]
+    bombHistory: [],  // [{aiBestCell, bombedCell}, ...]
+  });
 
   const playerMark = "X";
   const aiMark = "O";
@@ -407,26 +474,26 @@ export default function BombTicTacToeAI() {
     setLastBombReveal(null);
     explodingRef.current = false;
     gameStartedAt.current = null;
-    currentGameMoves.current = [];
+    // NOTE: playerProfile is NOT reset between games — it persists across the session
   }, []);
 
-  // Record a player move with what the "best" cell was at that moment
+  // Record a player move immediately into the rolling buffer
   const recordPlayerMove = useCallback((cellIndex, currentBoard) => {
     const scored = scoreCellsForMark(currentBoard, playerMark, aiMark);
     const bestCell = scored.length > 0 ? scored[0].cell : null;
-    currentGameMoves.current.push({
-      mark: playerMark,
-      bestCell: bestCell,
-      playedCell: cellIndex,
-    });
+    setPlayerProfile((prev) => ({
+      ...prev,
+      moveHistory: [...prev.moveHistory, { bestCell, playedCell: cellIndex }],
+    }));
   }, []);
 
-  // At game end, merge recorded moves into the persistent profile
-  const finalizeProfile = useCallback(() => {
-    if (currentGameMoves.current.length === 0) return;
+  // Record a player bomb immediately into the rolling buffer
+  const recordPlayerBomb = useCallback((bombIndex, currentBoard) => {
+    const aiScored = scoreCellsForMark(currentBoard, aiMark, playerMark);
+    const aiBestCell = aiScored.length > 0 ? aiScored[0].cell : null;
     setPlayerProfile((prev) => ({
-      history: [...prev.history, [...currentGameMoves.current]],
-      totalGames: prev.totalGames + 1,
+      ...prev,
+      bombHistory: [...prev.bombHistory, { aiBestCell, bombedCell: bombIndex }],
     }));
   }, []);
 
@@ -466,7 +533,6 @@ export default function BombTicTacToeAI() {
       const entry = { ...finalEntry, result: "BOOM" };
       setHistory((h) => [...h, entry]);
       setTimeout(() => {
-        finalizeProfile();
         // Log to server — build full history from current + this entry
         setHistory((h) => { logGameToServer("bomb", isPlayerMoving ? aiMark : playerMark, turnNumber, h); return h; });
         setResult({
@@ -491,7 +557,6 @@ export default function BombTicTacToeAI() {
       const entry = { ...finalEntry, result: "WIN" };
       setHistory((h) => [...h, entry]);
       setTimeout(() => {
-        finalizeProfile();
         setHistory((h) => { logGameToServer("win", winResult.winner, turnNumber, h); return h; });
         setResult({
           type: "win",
@@ -512,7 +577,6 @@ export default function BombTicTacToeAI() {
       const entry = { ...finalEntry, result: "DRAW" };
       setHistory((h) => [...h, entry]);
       setTimeout(() => {
-        finalizeProfile();
         setHistory((h) => { logGameToServer("draw", null, turnNumber, h); return h; });
         setResult({ type: "draw" });
         setPhase(PHASES.GAME_OVER);
@@ -521,7 +585,7 @@ export default function BombTicTacToeAI() {
     }
 
     return false;
-  }, [turnNumber, finalizeProfile, logGameToServer]);
+  }, [turnNumber, logGameToServer]);
 
   // AI bomb phase: AI places bomb, then player moves
   useEffect(() => {
@@ -594,7 +658,8 @@ export default function BombTicTacToeAI() {
     }
 
     if (phase === PHASES.PLAYER_BOMB) {
-      // Player places a bomb for the AI
+      // Player places a bomb for the AI — record it for the profile
+      recordPlayerBomb(index, board);
       setBombCell(index);
       setLastBombReveal(null);
       setPhase(PHASES.AI_MOVE);
@@ -606,7 +671,7 @@ export default function BombTicTacToeAI() {
     return (
       <>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');`}</style>
-        <DifficultySelect onSelect={setDifficulty} gamesPlayed={playerProfile.totalGames} />
+        <DifficultySelect onSelect={setDifficulty} turnsTracked={playerProfile.moveHistory.length + playerProfile.bombHistory.length} />
       </>
     );
   }
@@ -733,9 +798,9 @@ export default function BombTicTacToeAI() {
             color: "#d500f9", marginTop: 3, letterSpacing: "0.08em",
             opacity: 0.5,
           }}>
-            {playerProfile.totalGames < 3
-              ? `learning... (${playerProfile.totalGames}/3 games)`
-              : `${playerProfile.totalGames} games analyzed — adapting`}
+            {Math.min(playerProfile.moveHistory.length, playerProfile.bombHistory.length) < MIN_SAMPLES
+              ? `learning... (${playerProfile.moveHistory.length + playerProfile.bombHistory.length} turns tracked)`
+              : `adapting — ${playerProfile.moveHistory.length + playerProfile.bombHistory.length} turns tracked`}
           </div>
         )}
       </div>
